@@ -2,79 +2,113 @@
 
 static MotorStruct* motors;
 
-#define  FLASH_TEST_COUNT 8U
-#define  FLASH_TEST_ADDR 0x08010000
+static THD_WORKING_AREA(Shell_thread_wa, 1024);
+//static THD_WORKING_AREA(Controller_thread_wa, 4096);
 
-const uint32_t flashTestData[FLASH_TEST_COUNT] =
-{ 1, 1, 2, 3, 5, 8, 13, 21};
-
+//static Control_Param controller;
 
 static void cmd_print(BaseSequentialStream * chp, int argc, char *argv[]){
   (void) argc,argv;
 
-  chprintf(chp,"Shell OK\r\n");
+  uint8_t i;
+  for (i = 0; i < 3U; i++)
+    chprintf(chp,"Accl:%4d   Gyro:%4d\n",
+      (int32_t)(g_IMU1.accelBias[i] * 100),
+      (int32_t)(g_IMU1.gyroBias[i] * 100));
 }
 
-static void cmd_accelerate(BaseSequentialStream * chp, int argc, char *argv[]){
+/*
+static void cmd_Kp(BaseSequentialStream * chp, int argc, char *argv[]){
   (void) argc;
 
   char *toNumber = argv[0];
-  uint16_t finalNum=0;
+  uint32_t finalNum=0;
   while(*toNumber!='\0')
     finalNum=finalNum*10+*(toNumber++)-'0';
 
-  float cmd = motors[0].input + (float)finalNum * 0.01f;
-  if(cmd <= 0.9f)
-  {
-    motors[0].input = cmd;
-    motors[1].input = cmd;
-    chprintf(chp,"Motor Speed: %d\n", (int8_t)(cmd*100));
-  }
+  controller.Kp_s = (float)(finalNum/10000.0f);
+
+  chprintf(chp,"Kp: %d\n", finalNum);
 }
 
-static void cmd_deccelerate(BaseSequentialStream * chp, int argc, char *argv[]){
+static void cmd_Kd(BaseSequentialStream * chp, int argc, char *argv[]){
   (void) argc;
 
   char *toNumber = argv[0];
-  uint16_t finalNum=0;
+  uint32_t finalNum=0;
   while(*toNumber!='\0')
     finalNum=finalNum*10+*(toNumber++)-'0';
 
-  float cmd = motors[0].input - (float)finalNum * 0.01f;
-  if(cmd >= -0.9f)
-  {
-    motors[0].input = cmd;
-    motors[1].input = cmd;
-    chprintf(chp,"Motor Speed: %d\n", (int8_t)(cmd*100));
-  }
+  controller.Kp_s = (float)(finalNum/10000.0f);
+
+  chprintf(chp,"Kd: %d\n", finalNum);
 }
 
-static void cmd_flash(BaseSequentialStream * chp, int argc, char *argv[])
+static void cmd_calibrate(BaseSequentialStream * chp, int argc, char *argv[])
 {
   (void) argc,argv;
 
-  size_t i;
-  for (i = 0; i < FLASH_TEST_COUNT; i++)
-    flashWriteData(FLASH_TEST_ADDR + 4*i , flashTestData[i]);
+  while(!imuCalibrate(&g_IMU1, true));
+  while(!imuCalibrate(&g_IMU1, false));
 
-  chprintf(chp,"Flash successful\n");
-  chThdSleepMilliseconds(1000);
-  chprintf(chp,"Reading flash data...\n");
+  flashSectorErase(6);
+  size_t i = 0;
+  for (; i < 3U; i++)
+  {
+     MPUFlash[i] = g_IMU1.accelBias[i];
+     MPUFlash[i + 3] = g_IMU1.gyroBias[i];
+     chprintf(chp,"AccelBias: %4d   GyroBias: %4d\n",
+          (int32_t)(MPUFlash[i] * 100),
+          (int32_t)(MPUFlash[i + 3] * 100));
+  }
 
-  for (i = 0; i < FLASH_TEST_COUNT; i++)
-    chprintf(chp,"Data1:%d\n",flashReadData(FLASH_TEST_ADDR + 4*i));
+  chprintf(chp,"\n\n");
+
+  float result[6];
+
+  flashWrite(MPU_FLASH_ADDR, (char*)MPUFlash, 24);
+  chThdSleepMilliseconds(500);
+  flashRead(MPU_FLASH_ADDR,(char*)result, 24);
+
+  for (i = 0; i < 6U; i++)
+    chprintf(chp,"FlashData %d: %4d\n",i + 1,(int32_t)(result[i] * 100));
+
+  chprintf(chp,"\n\n");
+}
+
+static void cmd_control_update(BaseSequentialStream * chp, int argc, char *argv[])
+{
+  (void) argc,argv;
+
+  uint32_t parameters[PARAM_NUM] = {(uint32_t)(controller.Kd_s * 10000.0f),
+                                    (uint32_t)(controller.Kd_s * 10000.0f)};
+
+  flashSectorErase(5);
+  flashWrite(CONTROL_PARAMETERS_FLASH, (char*)parameters, PARAM_NUM*4);
+
+  control_param_init();
+  chprintf(chp, "Kp = %d, Kd = %d\n",controller.Kp_s,controller.Kd_s);
+}
+*/
+static void cmd_control_start(BaseSequentialStream * chp, int argc, char *argv[])
+{
+  (void) argc,argv;
+/*
+  chThdCreateStatic(Controller_thread_wa, sizeof(Controller_thread_wa),
+    NORMALPRIO + 2,
+                    Controller_thread, NULL);*/
 }
 
 static const ShellCommand commands[] =
 {
 
   {"print",cmd_print},
-  {"a",cmd_accelerate},
-  {"d" , cmd_deccelerate},
-  {"flash",cmd_flash},
-  {NULL, NULL}
+  //{"ps" , cmd_Kp},
+  //{"ds" , cmd_Kd},
+  //{"calibrate",cmd_calibrate},
+  //{"up", cmd_control_update},
+  //{"s", cmd_control_start}
 };
-
 
 static const ShellConfig shell_cfg1 =
 {
@@ -82,14 +116,39 @@ static const ShellConfig shell_cfg1 =
   commands
 };
 
-static THD_WORKING_AREA(Shell_thread_wa, 1024);
-
 void shellStart(void)
 {
   sdStart(BLE, NULL);
-
   motors = getMotors();
 
   shellCreateStatic(&shell_cfg1, Shell_thread_wa,
       sizeof(Shell_thread_wa), NORMALPRIO);
 }
+
+/*
+static THD_FUNCTION(Controller_thread, p)
+{
+  (void)p;
+  chRegSetThreadName("Controller");
+
+  control_param_init();
+  while(true)
+  {
+    float error = BALANCE_POS - g_IMU1.theta, output;
+
+    if(abs(error) > CONTROL_FAIL)
+      motor_stop();
+
+    output = controller.Kp_s * error;
+    if(output > 1.0f)
+      output = 1.0f;
+    else if(output < -1.0f)
+      output = -1.0f;
+
+    motors[0].input = output;
+    motors[1].input = output;
+
+    chThdSleepMilliseconds(50);
+  }
+}
+*/

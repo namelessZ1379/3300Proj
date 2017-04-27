@@ -1,10 +1,5 @@
 #include "motor.h"
-
-#define MOTOR_USE_TIMER PWMD8
 #define PWM_PERIOD 4000U
-
-#define REVERSE true
-#define NO_REVERSE false
 
 static const PWMConfig motor_pwmcfg = {
   84000000,
@@ -33,8 +28,8 @@ static HallStruct hall_encoder[NUM_OF_MOTOR] = {
 };
 
 static MotorStruct motors[NUM_OF_MOTOR] = {
-  {hall_encoder, PWMA_Channel_1, PWMB_Channel_2,NO_REVERSE, 0.0f, 0.0f, 0, 0},
-  {hall_encoder + 1, PWMA_Channel_3, PWMB_Channel_4,REVERSE, 0.0f, 0.0f, 0, 0}
+  {hall_encoder, PWMA_Channel_1, PWMB_Channel_2,NO_REVERSE, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f},
+  {hall_encoder + 1, PWMA_Channel_3, PWMB_Channel_4,REVERSE, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f}
 };
 
 MotorStruct* getMotors(void)
@@ -82,7 +77,9 @@ static THD_FUNCTION(Hall_thread, p)
   Hall_init(hall_encoder);
   Hall_init(hall_encoder + 1);
 
-  uint32_t tick = chVTGetSystemTimeX();
+  uint32_t count,tick = chVTGetSystemTimeX();
+
+  float temp[NUM_OF_MOTOR];
   while(true)
   {
     tick+=US2ST(HALL_COUNT);
@@ -92,7 +89,38 @@ static THD_FUNCTION(Hall_thread, p)
     else
       tick=chVTGetSystemTimeX();
 
+    uint16_t prev[NUM_OF_MOTOR];
+
+    prev[0] = motors[0].Hall_Encoder->count;
+    prev[1] = motors[1].Hall_Encoder->count;
+
     Hall_update(hall_encoder);
     Hall_update(hall_encoder + 1);
+
+    motors[0].speedRaw[count % SPEED_COUNT] = motors[0].Hall_Encoder->count -
+      prev[0];
+
+    motors[1].speedRaw[count % SPEED_COUNT] = motors[1].Hall_Encoder->count -
+      prev[1];
+
+    uint8_t i;
+
+    temp[0] = 0.0f;
+    temp[1] = 0.0f;
+
+    for (i = 0; i < SPEED_COUNT; i++) {
+      temp[0] += (float)motors[0].speedRaw[i];
+      temp[1] += (float)motors[1].speedRaw[i];
+    }
+
+    temp[0] /= (float)SPEED_COUNT;
+    temp[1] /= (float)SPEED_COUNT;
+
+    motors[0].speed = temp[0];
+    motors[1].speed = temp[1];
+  //  motors[0].speed_filtered = 0.3f*motors[0].speed + 0.7f*motors[0].speed_filtered;
+  //  motors[1].speed_filtered = 0.3f*motors[1].speed + 0.7f*motors[1].speed_filtered;
+
+    count++;
   }
 }

@@ -213,3 +213,23 @@ void flashWrite(flashaddr_t address, const char* buffer, size_t size)
     /* Lock flash again */
     flashLock();
 }
+
+void flashRead(flashaddr_t address, char* buffer, size_t size)
+{
+    if(flashUnlock() == CH_FAILED)
+        return;
+
+    flashWaitWhileBusy();
+
+    flashdata_t* flashbuffer = (flashdata_t*)buffer;
+
+    while (size >= sizeof(flashdata_t))
+    {
+        *flashbuffer = flashReadData(address);
+        address += sizeof(flashdata_t);
+        flashbuffer++;
+        size -= sizeof(flashdata_t);
+    }
+
+    flashLock();
+}

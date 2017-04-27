@@ -7,6 +7,8 @@
 
 #define HALL_FREQ                   50U  //Read Hall sensor @ 50Hz
 #define HALL_COUNT    1000000U/HALL_FREQ
+#define SPEED_COUNT                 10U
+
 
 typedef int32_t hall_cnt_t;
 

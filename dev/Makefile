@@ -119,8 +119,7 @@ CSRC = $(STARTUPSRC) \
 			 $(CHIBIOS)/os/hal/lib/streams/memstreams.c \
        $(CHIBIOS)/os/hal/lib/streams/chprintf.c \
        main.c shellcfg.c tft_display.c hall.c \
-			 motor.c rc.c flash.c mpu6050.c \
-			 inv_mpu.c inv_mpu_dmp_motion_driver.c
+			 motor.c rc.c flash.c mpu6050.c
 
 # C++ sources that can be compiled in ARM or THUMB mode depending on the global
 # setting.

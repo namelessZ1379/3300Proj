@@ -1,22 +1,96 @@
+/**
+ * This is device realize "read through write" paradigm. This is not
+ * standard, but most of I2C devices use this paradigm.
+ * You must write to device reading address, send restart to bus,
+ * and then begin reading process.
+ */
+
+#include "ch.h"
+#include "hal.h"
+
+//#include "telemetry.h"
 #include "mpu6050.h"
+#include "flash.h"
 
-#define MPU_I2C &I2CD1
+#include "chprintf.h"
+/* C libraries: */
+#include <string.h>
 
-#define MPU6050_I2C_ADDR_A0_LOW   0x68 //todo:modify
-#define MPU6050_I2C_ADDR_A0_HIGH  0x69
+#define MPU_USE_I2C &I2CD1
+
+/* MPU6050 useful registers */
+#define MPU6050_SMPLRT_DIV        0x19
+#define MPU6050_CONFIG            0x1A
+#define MPU6050_GYRO_CONFIG       0x1B
+#define MPU6050_ACCEL_CONFIG      0x1C
+#define MPU6050_ACCEL_XOUT_H      0x3B
+#define MPU6050_ACCEL_XOUT_L      0x3C
+#define MPU6050_ACCEL_YOUT_H      0x3D
+#define MPU6050_ACCEL_YOUT_L      0x3E
+#define MPU6050_ACCEL_ZOUT_H      0x3F
+#define MPU6050_ACCEL_ZOUT_L      0x40
+#define MPU6050_TEMP_OUT_H        0x41
+#define MPU6050_TEMP_OUT_L        0x42
+#define MPU6050_GYRO_XOUT_H       0x43
+#define MPU6050_GYRO_XOUT_L       0x44
+#define MPU6050_GYRO_YOUT_H       0x45
+#define MPU6050_GYRO_YOUT_L       0x46
+#define MPU6050_GYRO_ZOUT_H       0x47
+#define MPU6050_GYRO_ZOUT_L       0x48
+#define MPU6050_PWR_MGMT_1        0x6B
+
+/* Sensor scales */
+#define MPU6050_GYRO_SCALE        (1.0f / 131.0f) //  250 deg/s
+//#define MPU6050_GYRO_SCALE        (1.0f /  65.5f) //  500 deg/s
+//#define MPU6050_GYRO_SCALE        (1.0f /  32.8f) // 1000 deg/s
+//#define MPU6050_GYRO_SCALE        (1.0f /  16.4f) // 2000 deg/s
+
+#define GRAV                      9.81f
+//#define GRAV_BIA   9.81f*
+#define MPU6050_ACCEL_SCALE       (GRAV / 16384.0f) //  2G
+//#define MPU6050_ACCEL_SCALE       (GRAV /  8192.0f) //  4G
+//#define MPU6050_ACCEL_SCALE       (GRAV /  4096.0f) //  8G
+//#define MPU6050_ACCEL_SCALE       (GRAV /  2048.0f) // 16G
 
 #define MPU6050_RX_BUF_SIZE       0x0E
-#define MPU6050_TX_BUF_SIZE       0x10
-#define MPU_ERROR			0xff
+#define MPU6050_TX_BUF_SIZE       0x05
+
+#define IMU_AXIS_DIR_POS          0x08
+#define IMU_AXIS_ID_MASK          0x07
+
+#define IMU1_AXIS_DIR_POS         0x08
+#define IMU1_AXIS_ID_MASK         0x07
+#define IMU1_CONF_MASK            0x0F
+
+#define IMU2_AXIS_DIR_POS         0x80
+#define IMU2_AXIS_ID_MASK         0x70
+#define IMU2_CONF_MASK            0xF0
+
 /* I2C read transaction time-out in milliseconds. */
 #define MPU6050_READ_TIMEOUT_MS   0x01
 /* I2C write transaction time-out in milliseconds. */
 #define MPU6050_WRITE_TIMEOUT_MS  0x01
 
-#define MPU6050_I2C_ADDR_USER MPU6050_I2C_ADDR_A0_LOW
+#define CALIBRATION_COUNTER_MAX   2000
 
-
-static uint8_t mpu6050TXData[MPU6050_RX_BUF_SIZE];
+/**
+ * Global variables
+ */
+/* Default packed sensor settings.
+ * Structure of the sensor settings is:
+ * D2|2I2|1I2|0I2|D1|2I1|1I1|0I1
+ * where Dx  - axis direction of the sensor x;
+ *       nIx - n-th bit of axis ID of the sensor x.
+ *         |
+  IMU1_AXIS_DIR_POS
+ */
+uint8_t g_sensorSettings[3] = {
+  0x22  ,              /* Pitch (X) */
+  0x00|
+  IMU1_AXIS_DIR_POS ,              /* Roll  (Y) */
+  0x11
+/* Yaw   (Z) */
+};
 
 static const I2CConfig i2cfg = {
     OPMODE_I2C,
@@ -24,45 +98,132 @@ static const I2CConfig i2cfg = {
     FAST_DUTY_CYCLE_2
 };
 
-static IMUStruct IMU =
+/* IMU data structure. */
+IMUStruct g_IMU1;
+
+/* Flash stored structure */
+//MPUFlashStruct MPUFlash;
+float MPUFlash[6];
+
+/* I2C error info structure. */
+I2CErrorStruct g_i2cErrorInfo = {0, 0, 0};
+
+extern uint32_t g_boardStatus;
+
+/**
+ * Local variables
+ */
+/* Data buffers */
+static int16_t mpu6050Data[6];
+
+static uint8_t mpu6050RXData[MPU6050_RX_BUF_SIZE];
+static uint8_t mpu6050TXData[MPU6050_TX_BUF_SIZE];
+
+int16_t* mpuGetData(void)
 {
-  10,
-  {0,0,0},
-  {0,0,0},
-  {0.0f,0.0f,0.0f}
-};
-
-uint8_t MPU_Init(void)
-{
-	uint8_t res;
-	MPU_i2c_init();
-
-	MPU_Write_Byte(MPU_PWR_MGMT1_REG,0X80);	//��λMPU6050
-
-  chThdSleepMilliseconds(100);
-
-	MPU_Write_Byte(MPU_PWR_MGMT1_REG,0X00);	//����MPU6050
-	MPU_Set_Gyro_Fsr(3);					//�����Ǵ�����,��2000dps
-	MPU_Set_Accel_Fsr(0);					//���ٶȴ�����,��2g
-	MPU_Set_Rate(100);						//���ò�����50Hz
-	//MPU_Write_Byte(MPU_INT_EN_REG,0X00);	//�ر������ж�
-	MPU_Write_Byte(MPU_USER_CTRL_REG,0X00);	//I2C��ģʽ�ر�
-	MPU_Write_Byte(MPU_FIFO_EN_REG,0X00);	//�ر�FIFO
-	MPU_Write_Byte(MPU_INTBP_CFG_REG,0X80);	//INT���ŵ͵�ƽ��Ч
-	res=MPU_Read_Byte(MPU_DEVICE_ID_REG);
-
-	if(res==MPU6050_I2C_ADDR_USER)//����ID��ȷ
-	{
-    MPU_Write_Byte(MPU_PWR_MGMT1_REG,0X01);	//����CLKSEL,PLL X��Ϊ�ο�
-		MPU_Write_Byte(MPU_PWR_MGMT2_REG,0X00);	//���ٶ��������Ƕ�����
-		MPU_Set_Rate(100);						//���ò�����Ϊ50Hz
- 	}else return 1;
-	return 0;
+  return mpu6050Data;
 }
 
-void MPU_i2c_init(void)
+I2CErrorStruct* mpuGetError(void)
 {
-  i2cStart(MPU_I2C, &i2cfg);
+  return &g_i2cErrorInfo;
+}
+
+/**
+ * @brief  Initialization function of IMU data structure.
+ * @param  pIMU - pointer to IMU data structure;
+ * @param  fAddrLow - IMU address pin A0 is pulled low flag.
+ */
+void imuStructureInit(PIMUStruct pIMU, uint8_t fAddrHigh) {
+  uint8_t i;
+  /* Initialize to zero. */
+  memset((void *)pIMU, 0, sizeof(IMUStruct));
+  memset(MPUFlash, 0, 24);
+
+  flashRead(MPU_FLASH_ADDR,(char*)MPUFlash, 24);
+  for (i = 0; i < 3U; i++)
+  {
+     pIMU->accelBias[i] = MPUFlash[i];
+     pIMU->gyroBias[i] = MPUFlash[i + 3];
+  }
+
+  if (fAddrHigh) {
+    pIMU->addr = MPU6050_I2C_ADDR_A0_HIGH;
+    for (i = 0; i < 3; i++) {
+      pIMU->axes_conf[i] = g_sensorSettings[i] >> 4;
+    }
+  } else {
+    pIMU->addr = MPU6050_I2C_ADDR_A0_LOW;
+    for (i = 0; i < 3; i++) {
+      pIMU->axes_conf[i] = g_sensorSettings[i] & IMU1_CONF_MASK;
+    }
+  }
+}
+
+/**
+ * @brief
+ */
+void imuCalibrationSet(uint8_t flags) {
+  g_boardStatus |= flags & IMU_CALIBRATION_MASK;
+}
+
+/**
+ * @brief  Initialization function of IMU data structure.
+ * @param  pIMU - pointer to IMU data structure;
+ * @param  fCalibrateAcc - accelerometer calibration flag.
+ * @return 0 - if calibration is not finished;
+ *         1 - if calibration is finished.
+ */
+uint8_t imuCalibrate(PIMUStruct pIMU, uint8_t fCalibrateAcc) {
+  if(!mpu6050GetNewData(&g_IMU1))
+    return;
+
+  if (fCalibrateAcc) {
+    if (pIMU->clbrCounter == 0) {
+      /* Reset accelerometer bias. */
+      pIMU->accelBias[0] = pIMU->accelData[0] + GRAV;
+      pIMU->accelBias[1] = pIMU->accelData[1];
+      pIMU->accelBias[2] = pIMU->accelData[2];
+      pIMU->clbrCounter++;
+      return 0;
+    } else if (pIMU->clbrCounter < CALIBRATION_COUNTER_MAX) {
+      /* Accumulate accelerometer bias. */
+      pIMU->accelBias[0] += pIMU->accelData[0] + GRAV;
+      pIMU->accelBias[1] += pIMU->accelData[1];
+      pIMU->accelBias[2] += pIMU->accelData[2];
+      pIMU->clbrCounter++;
+      return 0;
+    } else {
+      /* Update accelerometer bias. */
+      pIMU->accelBias[0] /= (float)CALIBRATION_COUNTER_MAX;
+      pIMU->accelBias[1] /= (float)CALIBRATION_COUNTER_MAX;
+      pIMU->accelBias[2] /= (float)CALIBRATION_COUNTER_MAX;
+      pIMU->clbrCounter = 0;
+    }
+  } else {
+    if (pIMU->clbrCounter == 0) {
+      /* Reset gyroscope bias. */
+      pIMU->gyroBias[0] = pIMU->gyroData[0];
+      pIMU->gyroBias[1] = pIMU->gyroData[1];
+      pIMU->gyroBias[2] = pIMU->gyroData[2];
+      pIMU->clbrCounter++;
+      return 0;
+    } else if (pIMU->clbrCounter < CALIBRATION_COUNTER_MAX) {
+      /* Accumulate gyroscope bias. */
+      pIMU->gyroBias[0] += pIMU->gyroData[0];
+      pIMU->gyroBias[1] += pIMU->gyroData[1];
+      pIMU->gyroBias[2] += pIMU->gyroData[2];
+      pIMU->clbrCounter++;
+      return 0;
+    } else {
+      /* Update gyroscope bias. */
+      pIMU->gyroBias[0] /= (float)CALIBRATION_COUNTER_MAX;
+      pIMU->gyroBias[1] /= (float)CALIBRATION_COUNTER_MAX;
+      pIMU->gyroBias[2] /= (float)CALIBRATION_COUNTER_MAX;
+      pIMU->clbrCounter = 0;
+    }
+  }
+  return 1;
 }
 
 /**
@@ -70,248 +231,224 @@ void MPU_i2c_init(void)
  * @param  addr - I2C address of MPU6050 chip.
  * @return 1 - if initialization was successful;
  *         0 - if initialization failed.
- *//*
-uint8_t MPU_Init(void)
-{
+ */
+uint8_t mpu6050Init(uint8_t addr) {
   msg_t status = MSG_OK;
 
-  MPU_i2c_init();
+  i2cStart(MPU_USE_I2C, &i2cfg);
 
-  // Reset all MPU6050 registers to their default values
-  mpu6050TXData[0] = MPU_PWR_MGMT1_REG;  // Start register address;
+  /* Reset all MPU6050 registers to their default values */
+  mpu6050TXData[0] = MPU6050_PWR_MGMT_1;  // Start register address;
   mpu6050TXData[1] = 0xC0;          // Register value 0b11000000
 
-  i2cAcquireBus(MPU_I2C);
+  i2cAcquireBus(MPU_USE_I2C);
 
-  status = i2cMasterTransmitTimeout(MPU_I2C, MPU6050_I2C_ADDR_USER, mpu6050TXData, 2,
+  status = i2cMasterTransmitTimeout(MPU_USE_I2C, addr, mpu6050TXData, 2,
     NULL, 0, MS2ST(MPU6050_WRITE_TIMEOUT_MS));
 
-  if (status != MSG_OK)
+  if (status != MSG_OK) {
+    i2cReleaseBus(MPU_USE_I2C);
+    g_i2cErrorInfo.last_i2c_error = i2cGetErrors(MPU_USE_I2C);
+    if (g_i2cErrorInfo.last_i2c_error) {
+      g_i2cErrorInfo.i2c_error_counter++;
+    }
+    g_i2cErrorInfo.errorFlag |= 0x02;
     return 0;
-
-  // Wait 100 ms for the MPU6050 to reset
-  chThdSleepMilliseconds(100);
-
-  // Clear the SLEEP flag, set the clock and start measuring.
-  mpu6050TXData[0] = MPU_PWR_MGMT1_REG;  // Start register address;
-  mpu6050TXData[1] = 0x03;         // Register value CLKSEL = PLL_Z;
-
-  status = i2cMasterTransmitTimeout(MPU_I2C, MPU6050_I2C_ADDR_USER, mpu6050TXData, 2,
-    NULL, 0, MS2ST(MPU6050_WRITE_TIMEOUT_MS));
-
-  if (status != MSG_OK)
-    return 0;
-
-  mpu6050TXData[0] = MPU_SAMPLE_RATE_REG;  // Start register address;
-  mpu6050TXData[1] = 11;                  // SAMPLE_RATE_REG register value (8000 / (11 + 1) = 666 Hz);
-  mpu6050TXData[2] = 0x00;          // CONFIG register value DLPF_CFG = 0 (256-260 Hz);
-
-  //MPU_Set_Accel_Fsr(0);					//���ٶȴ�����,��2g
-
-  status = i2cMasterTransmitTimeout(MPU_I2C, MPU6050_I2C_ADDR_USER, mpu6050TXData, 5,
-    NULL, 0, MS2ST(MPU6050_WRITE_TIMEOUT_MS));
-
-
-  i2cReleaseBus(MPU_I2C);
-
-  if (status != MSG_OK)
-    return 0;
-
-  return 1;
-}*/
-
-//����MPU6050�����Ǵ����������̷�Χ
-//fsr:0,��250dps;1,��500dps;2,��1000dps;3,��2000dps
-//����ֵ:0,���óɹ�
-//    ����,����ʧ��
-uint8_t MPU_Set_Gyro_Fsr(uint8_t fsr)
-{
-	return MPU_Write_Byte(MPU_GYRO_CFG_REG,fsr<<3);//���������������̷�Χ
-}
-//����MPU6050���ٶȴ����������̷�Χ
-//fsr:0,��2g;1,��4g;2,��8g;3,��16g
-//����ֵ:0,���óɹ�
-//    ����,����ʧ��
-uint8_t MPU_Set_Accel_Fsr(uint8_t fsr)
-{
-	return MPU_Write_Byte(MPU_ACCEL_CFG_REG,fsr<<3);//���ü��ٶȴ����������̷�Χ
-}
-//����MPU6050�����ֵ�ͨ�˲���
-//lpf:���ֵ�ͨ�˲�Ƶ��(Hz)
-//����ֵ:0,���óɹ�
-//    ����,����ʧ��
-uint8_t MPU_Set_LPF(uint16_t lpf)
-{
-	uint8_t data=0;
-	if(lpf>=188)data=1;
-	else if(lpf>=98)data=2;
-	else if(lpf>=42)data=3;
-	else if(lpf>=20)data=4;
-	else if(lpf>=10)data=5;
-	else data=6;
-	return MPU_Write_Byte(MPU_CFG_REG,data);//�������ֵ�ͨ�˲���
-}
-//����MPU6050�Ĳ�����(�ٶ�Fs=1KHz)
-//rate:4~1000(Hz)
-//����ֵ:0,���óɹ�
-//    ����,����ʧ��
-uint8_t MPU_Set_Rate(uint16_t rate)
-{
-	uint8_t data;
-	if(rate>1000)rate=1000;
-	if(rate<4)rate=4;
-	data=1000/rate-1;
-	data=MPU_Write_Byte(MPU_SAMPLE_RATE_REG,data);	//�������ֵ�ͨ�˲���
- 	return MPU_Set_LPF(rate/2);	//�Զ�����LPFΪ�����ʵ�һ��
-}
-
-//�õ��¶�ֵ
-//����ֵ:�¶�ֵ(������100��)
-short MPU_Get_Temperature(void)
-{
-    uint8_t buf[2];
-    short raw;
-	float temp;
-	MPU_Read_Len(MPU6050_I2C_ADDR_USER,MPU_TEMP_OUTH_REG,2,buf);
-    raw=((uint16_t)buf[0]<<8)|buf[1];
-    temp=36.53+((double)raw)/340;
-    return temp*100;;
-}
-//�õ�������ֵ(ԭʼֵ)
-//gx,gy,gz:������x,y,z����ԭʼ����(������)
-//����ֵ:0,�ɹ�
-//    ����,��������
-uint8_t MPU_Get_Gyroscope(int16_t* Gyro)
-{
-  uint8_t buf[6],res;
-	res=MPU_Read_Len(MPU6050_I2C_ADDR_USER,MPU_GYRO_XOUTH_REG,6,buf);
-	if(res==0)
-	{
-		Gyro[0]=(int16_t)((buf[0]<<8)|buf[1]);
-		Gyro[1]=(int16_t)((buf[2]<<8)|buf[3]);
-		Gyro[2]=(int16_t)((buf[4]<<8)|buf[5]);
-	}
-  return res;
-}
-//�õ����ٶ�ֵ(ԭʼֵ)
-//gx,gy,gz:������x,y,z����ԭʼ����(������)
-//����ֵ:0,�ɹ�
-//    ����,��������
-uint8_t MPU_Get_Accelerometer(int16_t* Accel)
-{
-  uint8_t buf[6],res;
-	res=MPU_Read_Len(MPU6050_I2C_ADDR_USER,MPU_ACCEL_XOUTH_REG,6,buf);
-	if(res==0)
-	{
-		Accel[0]=(int16_t)((buf[0]<<8)|buf[1]);
-		Accel[1]=(int16_t)((buf[2]<<8)|buf[3]);
-		Accel[2]=(int16_t)((buf[4]<<8)|buf[5]);
-	}
-  return res;
-}
-//IIC����д
-//addr:������ַ
-//reg:�Ĵ�����ַ
-//len:д�볤��
-//buf:������
-//����ֵ:0,����
-//    ����,��������
-uint8_t MPU_Write_Len(uint8_t addr,uint8_t reg,uint8_t len,uint8_t *buf)
-{
-	uint8_t i;
-  i2cAcquireBus(MPU_I2C);
-
-  uint8_t txbuf[len + 1];
-  txbuf[0] = reg;
-
-  for (i = 0; i < len; i++)
-    txbuf[i + 1] = buf[i];
-
-  if(i2cMasterTransmitTimeout(MPU_I2C, MPU6050_I2C_ADDR_USER, txbuf, len + 1,
-    NULL, 0, MS2ST(MPU6050_WRITE_TIMEOUT_MS)) != MSG_OK)
-  {
-    i2cReleaseBus(MPU_I2C);
-    return 1;
   }
 
-  i2cReleaseBus(MPU_I2C);
-	return 0;
+  /* Wait 100 ms for the MPU6050 to reset */
+  chThdSleepMilliseconds(100);
+
+  /* Clear the SLEEP flag, set the clock and start measuring. */
+  mpu6050TXData[0] = MPU6050_PWR_MGMT_1;  // Start register address;
+  mpu6050TXData[1] = 0x03;         // Register value CLKSEL = PLL_Z;
+
+  status = i2cMasterTransmitTimeout(MPU_USE_I2C, addr, mpu6050TXData, 2,
+    NULL, 0, MS2ST(MPU6050_WRITE_TIMEOUT_MS));
+
+  if (status != MSG_OK) {
+    i2cReleaseBus(MPU_USE_I2C);
+    g_i2cErrorInfo.last_i2c_error = i2cGetErrors(MPU_USE_I2C);
+    if (g_i2cErrorInfo.last_i2c_error) {
+      g_i2cErrorInfo.i2c_error_counter++;
+//      debugLog("E:mpu6050i-rst");
+    }
+    g_i2cErrorInfo.errorFlag |= 0x04;
+    return 0;
+  }
+
+  /* Configure the MPU6050 sensor        */
+  /* NOTE:                               */
+  /* - SLEEP flag must be cleared before */
+  /*   configuring the sensor.           */
+  mpu6050TXData[0] = MPU6050_SMPLRT_DIV;  // Start register address;
+  mpu6050TXData[1] = 11;                  // SMPLRT_DIV register value (8000 / (11 + 1) = 666 Hz);
+  mpu6050TXData[2] = 0x00;          // CONFIG register value DLPF_CFG = 0 (256-260 Hz);
+  mpu6050TXData[3] = 0x00;          // GYRO_CONFIG register value FS_SEL = +-250 deg/s;
+  mpu6050TXData[4] = 0x01;          // ACCEL_CONFIG register value AFS_SEL = +-4G
+
+  status = i2cMasterTransmitTimeout(MPU_USE_I2C, addr, mpu6050TXData, 5,
+    NULL, 0, MS2ST(MPU6050_WRITE_TIMEOUT_MS));
+
+
+  i2cReleaseBus(MPU_USE_I2C);
+
+  if (status != MSG_OK) {
+    g_i2cErrorInfo.last_i2c_error = i2cGetErrors(MPU_USE_I2C);
+    if (g_i2cErrorInfo.last_i2c_error) {
+      g_i2cErrorInfo.i2c_error_counter++;
+     // debugLog("E:mpu6050i-cfg");
+    }
+    g_i2cErrorInfo.errorFlag |= 0x08;
+    return 0;
+  }
+
+  return 1;
 }
 
-//IIC������
-//addr:������ַ
-//reg:Ҫ��ȡ�ļĴ�����ַ
-//len:Ҫ��ȡ�ĳ���
-//buf:��ȡ�������ݴ洢��
-//����ֵ:0,����
-//    ����,��������
-uint8_t MPU_Read_Len(uint8_t addr,uint8_t reg,uint8_t len,uint8_t *buf)
-{
- 	i2cAcquireBus(MPU_I2C);
+int mpu6050GetRawData(PIMUStruct pIMU,int16_t mpu6050Data[6]) {
+  msg_t status = MSG_OK;
+  uint8_t id;
 
-	uint8_t txbuf = reg;
+  /* Set the start register address for bulk data transfer. */
+  mpu6050TXData[0] = MPU6050_ACCEL_XOUT_H;
 
-	if(i2cMasterTransmitTimeout(MPU_I2C, MPU6050_I2C_ADDR_USER, &txbuf, 1,
-    buf, len, MS2ST(MPU6050_READ_TIMEOUT_MS)) != MSG_OK)	//�ȴ�Ӧ��
-	{
-		i2cReleaseBus(MPU_I2C);
-		return 1;
-	}
-  i2cReleaseBus(MPU_I2C);	//����һ��ֹͣ����
-	return 0;
-}
-//IICдһ���ֽ�
-//reg:�Ĵ�����ַ
-//data:����
-//����ֵ:0,����
-//    ����,��������
-uint8_t MPU_Write_Byte(uint8_t reg, uint8_t data)
-{
-	uint8_t txbuf[2] = {reg,data};
+  //palTogglePad(GPIOD,GPIOD_LED4);
 
-	i2cAcquireBus(MPU_I2C);
+  i2cAcquireBus(MPU_USE_I2C);
+  status = i2cMasterTransmitTimeout(MPU_USE_I2C, pIMU->addr, mpu6050TXData, 1,
+    mpu6050RXData, 14, MS2ST(MPU6050_READ_TIMEOUT_MS));
+	i2cReleaseBus(MPU_USE_I2C);
 
-	if(i2cMasterTransmitTimeout(MPU_I2C, MPU6050_I2C_ADDR_USER, txbuf, 2,
-    NULL, 0, MS2ST(MPU6050_WRITE_TIMEOUT_MS)))	//�ȴ�Ӧ��
-	{
-		i2cReleaseBus(MPU_I2C);
-		return 1;
-	}
+  //palTogglePad(GPIOD,GPIOD_LED3);
 
-	i2cReleaseBus(MPU_I2C);
-	return 0;
-}
-//IIC��һ���ֽ�
-//reg:�Ĵ�����ַ
-//����ֵ:����������
-uint8_t MPU_Read_Byte(uint8_t reg)
-{
-	uint8_t res;
-  i2cAcquireBus(MPU_I2C);
+  if (status != MSG_OK) {
+    g_i2cErrorInfo.last_i2c_error = i2cGetErrors(MPU_USE_I2C);
+    if (g_i2cErrorInfo.last_i2c_error) {
+      g_i2cErrorInfo.i2c_error_counter++;
+ //     debugLog("E:mpu6050gnd");
+    }
+    return -1;
+  }
 
-	uint8_t txbuf = reg;
-
-	if(i2cMasterTransmitTimeout(MPU_I2C, MPU6050_I2C_ADDR_USER, &txbuf, 1,
-    &res, 1, MS2ST(MPU6050_READ_TIMEOUT_MS)))	//�ȴ�Ӧ��
-	{
-		i2cReleaseBus(MPU_I2C);
-		return MPU_ERROR;
-	}
-
-	i2cReleaseBus(MPU_I2C);			//����һ��ֹͣ����
-	return res;
+  mpu6050Data[0] = (int16_t)((mpu6050RXData[ 0]<<8) | mpu6050RXData[ 1]); /* Accel X */
+  mpu6050Data[1] = (int16_t)((mpu6050RXData[ 2]<<8) | mpu6050RXData[ 3]); /* Accel Y */
+  mpu6050Data[2] = (int16_t)((mpu6050RXData[ 4]<<8) | mpu6050RXData[ 5]); /* Accel Z */
+  mpu6050Data[3] = (int16_t)((mpu6050RXData[ 8]<<8) | mpu6050RXData[ 9]); /* Gyro X  */
+  mpu6050Data[4] = (int16_t)((mpu6050RXData[10]<<8) | mpu6050RXData[11]); /* Gyro Y  */
+  mpu6050Data[5] = (int16_t)((mpu6050RXData[12]<<8) | mpu6050RXData[13]); /* Gyro Z  */
+  return 0;
 }
 
-PIMUStruct getIMU(void)
-{
-  return &IMU;
+
+/**
+ * @brief  Reads new data from the sensor
+ * @param  pIMU - pointer to IMU data structure;
+ * @return 1 - if reading was successful;
+ *         0 - if reading failed.
+ */
+uint8_t mpu6050GetNewData(PIMUStruct pIMU) {
+  msg_t status = MSG_OK;
+  uint8_t id;
+  int16_t mpu6050Data[6];
+
+  /* Set the start register address for bulk data transfer. */
+  mpu6050TXData[0] = MPU6050_ACCEL_XOUT_H;
+  i2cAcquireBus(MPU_USE_I2C);
+  status = i2cMasterTransmitTimeout(MPU_USE_I2C, pIMU->addr, mpu6050TXData, 1,
+    mpu6050RXData, 14, MS2ST(MPU6050_READ_TIMEOUT_MS));
+	i2cReleaseBus(MPU_USE_I2C);
+
+  if (status != MSG_OK) {
+    g_i2cErrorInfo.last_i2c_error = i2cGetErrors(MPU_USE_I2C);
+    if (g_i2cErrorInfo.last_i2c_error) {
+      g_i2cErrorInfo.i2c_error_counter++;
+ //     debugLog("E:mpu6050gnd");
+    }
+    return 0;
+  }
+
+  mpu6050Data[0] = (int16_t)((mpu6050RXData[ 0]<<8) | mpu6050RXData[ 1]); /* Accel X */
+  mpu6050Data[1] = (int16_t)((mpu6050RXData[ 2]<<8) | mpu6050RXData[ 3]); /* Accel Y */
+  mpu6050Data[2] = (int16_t)((mpu6050RXData[ 4]<<8) | mpu6050RXData[ 5]); /* Accel Z */
+  mpu6050Data[3] = (int16_t)((mpu6050RXData[ 8]<<8) | mpu6050RXData[ 9]); /* Gyro X  */
+  mpu6050Data[4] = (int16_t)((mpu6050RXData[10]<<8) | mpu6050RXData[11]); /* Gyro Y  */
+  mpu6050Data[5] = (int16_t)((mpu6050RXData[12]<<8) | mpu6050RXData[13]); /* Gyro Z  */
+
+  /* Pitch: */
+  id = pIMU->axes_conf[0] & IMU_AXIS_ID_MASK;
+  if (pIMU->axes_conf[0] & IMU_AXIS_DIR_POS) {
+    pIMU->accelData[0] = mpu6050Data[id + 0]*MPU6050_ACCEL_SCALE;
+    pIMU->gyroData[0]  = mpu6050Data[id + 3]*MPU6050_GYRO_SCALE;
+  } else {
+    pIMU->accelData[0] = (-1 - mpu6050Data[id + 0])*MPU6050_ACCEL_SCALE;
+    pIMU->gyroData[0]  = (-1 - mpu6050Data[id + 3])*MPU6050_GYRO_SCALE;
+  }
+
+  /* Roll: */
+  id = pIMU->axes_conf[1] & IMU_AXIS_ID_MASK;
+  if (pIMU->axes_conf[1] & IMU_AXIS_DIR_POS) {
+    pIMU->accelData[1] = mpu6050Data[id + 0]*MPU6050_ACCEL_SCALE;
+    pIMU->gyroData[1]  = mpu6050Data[id + 3]*MPU6050_GYRO_SCALE;
+  } else {
+    pIMU->accelData[1] = (-1 - mpu6050Data[id + 0])*MPU6050_ACCEL_SCALE;
+    pIMU->gyroData[1]  = (-1 - mpu6050Data[id + 3])*MPU6050_GYRO_SCALE;
+  }
+
+  /* Yaw: */
+  id = pIMU->axes_conf[2] & IMU_AXIS_ID_MASK;
+  if (pIMU->axes_conf[2] & IMU_AXIS_DIR_POS) {
+    pIMU->accelData[2] = mpu6050Data[id + 0]*MPU6050_ACCEL_SCALE;
+    pIMU->gyroData[2]  = mpu6050Data[id + 3]*MPU6050_GYRO_SCALE;
+  } else {
+    pIMU->accelData[2] = (-1 - mpu6050Data[id + 0])*MPU6050_ACCEL_SCALE;
+    pIMU->gyroData[2]  = (-1 - mpu6050Data[id + 3])*MPU6050_GYRO_SCALE;
+  }
+
+  return 1;
 }
 
-uint8_t MPU_test(void)
+static float lpfilter(float alpha, float input, float prev)
 {
-  uint8_t result;
-  result = MPU_Get_Accelerometer(IMU.Accel);
-  result = MPU_Get_Gyroscope(IMU.Gyro);
+  return alpha*input + (1.0f - alpha)*prev;
+}
 
-  return result;
+void mpu6050update(PIMUStruct pIMU)
+{
+  uint8_t i;
+  if(!mpu6050GetNewData(&g_IMU1))
+    return;
+
+  for(i = 0; i < 3; i++)
+  {
+    pIMU->accelData[i] -= pIMU->accelBias[i];
+    pIMU->gyroData[i] -= pIMU->gyroBias[i];
+
+    pIMU->accelFiltered[i] =
+      lpfilter(0.15f, pIMU->accelData[i], pIMU->accelFiltered[i]);
+    pIMU->gyroFiltered[i] =
+      lpfilter(0.3f, pIMU->gyroData[i], pIMU->gyroFiltered[i]);
+  }
+
+  pIMU->theta_gyro -= pIMU->gyroFiltered[2]/(float)(MPU_FREQ);
+}
+
+#define RAD2DEC 180.0f / M_PI
+void mpu_calc_theta(PIMUStruct pIMU)
+{
+  pIMU->theta_accl = atan(pIMU->accelFiltered[1]/pIMU->accelFiltered[0]) * RAD2DEC;
+
+  float alpha, d_accel = pIMU->theta_accl - pIMU->theta;
+  float theta_prev = pIMU->theta;
+  if(abs(d_accel) < 0.5f)
+    alpha = 0.6f;
+  else if(abs(d_accel) < 2.0f)
+    alpha = 0.2f;
+  else
+    alpha = 0.05f;
+
+  pIMU->theta += d_accel * alpha + pIMU->theta_gyro * (1.0f - alpha);
+  pIMU->theta_gyro = 0;
+
+  pIMU->theta = lpfilter(0.4f, pIMU->theta, theta_prev);
 }

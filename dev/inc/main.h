@@ -6,9 +6,8 @@
 #include "rc.h"
 #include "flash.h"
 #include "3300misc.h"
+#include "control.h"
 
 #include "mpu6050.h"
-#include "inv_mpu.h"
-#include "inv_mpu_dmp_motion_driver.h"
 
 #endif

@@ -19,7 +19,6 @@
  * Sector 3 :   0x0800 C000 - 0x0800 FFFF
  * Sector 6 :   0x0804 0000 - 0x0805 FFFF
  */
-#define FLASHADDRESSDEFINE 0x08040000
 
 /* Error codes */
 
@@ -115,5 +114,6 @@ flashdata_t flashReadData(flashaddr_t address);
 void flashWriteData(flashaddr_t address, const flashdata_t data);
 void flashSectorErase(flashsector_t sector);
 void flashWrite(flashaddr_t address, const char* buffer, size_t size);
+void flashRead(flashaddr_t address, char* buffer, size_t size);
 
 #endif /* INC_FLASH_H_ */
