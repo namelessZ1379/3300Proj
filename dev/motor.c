@@ -28,8 +28,8 @@ static HallStruct hall_encoder[NUM_OF_MOTOR] = {
 };
 
 static MotorStruct motors[NUM_OF_MOTOR] = {
-  {hall_encoder, PWMA_Channel_1, PWMB_Channel_2,NO_REVERSE, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f},
-  {hall_encoder + 1, PWMA_Channel_3, PWMB_Channel_4,REVERSE, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f}
+  {hall_encoder, PWMA_Channel_1, PWMB_Channel_2,NO_REVERSE, 0.0f, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f},
+  {hall_encoder + 1, PWMA_Channel_3, PWMB_Channel_4,REVERSE, 0.0f, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f}
 };
 
 MotorStruct* getMotors(void)
@@ -49,8 +49,8 @@ inline void motor_init(void)
 
 void motor_pwmUpdate(void)
 {
-  motors[0].input_temp = (motors[0].reverse)?-motors[0].input : motors[0].input;
-  motors[1].input_temp = (motors[1].reverse)?-motors[1].input : motors[1].input;
+  motors[0].input_temp = (motors[0].reverse)?-motors[0].input_diff : motors[0].input_diff;
+  motors[1].input_temp = (motors[1].reverse)?-motors[1].input_diff : motors[1].input_diff;
 
   motors[0].pwmA =
     (uint16_t)(PWM_PERIOD*((motors[0].input_temp > 0.0f)? motors[0].input_temp : 0.0f));

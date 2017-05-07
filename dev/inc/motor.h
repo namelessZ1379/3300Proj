@@ -29,6 +29,7 @@ typedef struct {
 	uint8_t PWMChannelB;
 	uint8_t reverse;
 	float input;
+	float input_diff;
 	float input_temp;
 	uint16_t pwmA;
 	uint16_t pwmB;

@@ -66,12 +66,14 @@ static THD_FUNCTION(Controller_thread, p)
       palTogglePad(GPIOD, GPIOD_LED4);
     }
 
+    error += ((float)rc_channel[2] - 1500.0f)/100.0f;
     //error += speed_output;
 
     output = controller.Kp_s * error -
-             controller.Kd_s * g_IMU1.gyroFiltered[2] / 100.0f;
+             controller.Kd_s * g_IMU1.gyroFiltered[2] / 150.0f;
 
     float temp;
+
     if (motors[0].input > 0.0f)
       temp =  motors[0].input - DEAD_ZONE;
     else
@@ -84,6 +86,7 @@ static THD_FUNCTION(Controller_thread, p)
     else if(temp < -0.5f)
       temp = -0.5f;
 
+
     if(temp > 0.0f)
     {
       motors[0].input = temp + DEAD_ZONE;
@@ -94,6 +97,10 @@ static THD_FUNCTION(Controller_thread, p)
       motors[0].input = temp - DEAD_ZONE;
       motors[1].input = temp - DEAD_ZONE;
     }
+
+    float diff = (float)(rc_channel[1] - 1500.0f)/15000.0f;
+    motors[0].input_diff = motors[0].input + diff;
+    motors[1].input_diff = motors[1].input - diff;
 
     chThdSleepMilliseconds(20);
   }
