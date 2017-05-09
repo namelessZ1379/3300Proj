@@ -28,21 +28,21 @@ static THD_FUNCTION(Test_thread, p)
   palClearPad(GPIOD,GPIOD_LED3);
 
   rc_channel = rc_getChannels();
+  uint32_t count = 0;
 
   while (true)
   {
-    palTogglePad(GPIOD,GPIOD_LED6);
+    if(!(count % 4))
+      palTogglePad(GPIOD,GPIOD_LED6);
 
     if(palReadPad(GPIOA,GPIOA_BUTTON))
     {
       cmd_control_start(CHP, 0, NULL);
-
-      palTogglePad(GPIOD,GPIOD_LED4);
-      chThdSleepMilliseconds(1000);
       palTogglePad(GPIOD,GPIOD_LED4);
     }
 
-    chThdSleepMilliseconds(200);
+    count++;
+    chThdSleepMilliseconds(50);
   }
 }
 
