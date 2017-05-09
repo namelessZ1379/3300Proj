@@ -6,8 +6,11 @@
 #include "shell.h"
 #include "chprintf.h"
 
+
 #define BLE &SD4
+#define BLE2 &SD2
 #define CHP (BaseSequentialStream*)BLE
+#define CHP2 (BaseSequentialStream*)BLE2
 
 void shellStart(void);
 

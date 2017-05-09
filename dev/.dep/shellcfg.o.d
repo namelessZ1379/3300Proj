@@ -56,10 +56,10 @@ build/obj/shellcfg.o: shellcfg.c inc/main.h inc/tft_display.h \
  ../os/hal/include/uart.h ../os/hal/include/usb.h ../os/hal/include/wdg.h \
  ../os/hal/include/st.h ../os/hal/include/mmc_spi.h \
  ../os/hal/include/serial_usb.h inc/1.8\ TFT_ascii.h inc/motor.h \
- inc/hall.h inc/rc.h inc/flash.h inc/3300misc.h ../os/various/shell.h \
- ../os/hal/lib/streams/chprintf.h \
+ inc/hall.h inc/rc.h inc/flash.h inc/control.h inc/3300misc.h \
+ ../os/various/shell.h ../os/hal/lib/streams/chprintf.h \
  d:\chibistudio\tools\gnu\ tools\ arm\ embedded\4.9\ 2015q3\lib\gcc\arm-none-eabi\4.9.3\include\stdarg.h \
- inc/control.h inc/mpu6050.h \
+ inc/mpu6050.h \
  d:\chibistudio\tools\gnu\ tools\ arm\ embedded\4.9\ 2015q3\arm-none-eabi\include\math.h \
  d:\chibistudio\tools\gnu\ tools\ arm\ embedded\4.9\ 2015q3\arm-none-eabi\include\sys\reent.h \
  d:\chibistudio\tools\gnu\ tools\ arm\ embedded\4.9\ 2015q3\arm-none-eabi\include\_ansi.h \
@@ -277,6 +277,8 @@ inc/rc.h:
 
 inc/flash.h:
 
+inc/control.h:
+
 inc/3300misc.h:
 
 ../os/various/shell.h:
@@ -284,8 +286,6 @@ inc/3300misc.h:
 ../os/hal/lib/streams/chprintf.h:
 
 d:\chibistudio\tools\gnu\ tools\ arm\ embedded\4.9\ 2015q3\lib\gcc\arm-none-eabi\4.9.3\include\stdarg.h:
-
-inc/control.h:
 
 inc/mpu6050.h:
 

@@ -5,9 +5,10 @@
 #include "motor.h"
 #include "rc.h"
 #include "flash.h"
-#include "3300misc.h"
 #include "control.h"
 
 #include "mpu6050.h"
+
+void cmd_control_start(BaseSequentialStream * chp, int argc, char *argv[]);
 
 #endif

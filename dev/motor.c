@@ -19,6 +19,26 @@ static const PWMConfig motor_pwmcfg = {
   0  /* DIER register value. */
 };
 
+static const PWMConfig music_pwmcfg = {
+  84000000,
+  PWM_PERIOD,     /* PWM period (1/18000 s) in ticks
+               for center-aligned mode.      */
+  NULL,     /* Callback disabled.            */
+  {         /* PWM channel configuration:    */
+    {PWM_OUTPUT_ACTIVE_HIGH, NULL},  /* CH1 */
+    {PWM_OUTPUT_ACTIVE_LOW, NULL},  /* CH2 */
+    {PWM_OUTPUT_ACTIVE_HIGH, NULL},  /* CH3 */
+    {PWM_OUTPUT_ACTIVE_LOW, NULL}   /* CH4 */
+  },
+  0, /* CR2 register value. */
+#if STM32_PWM_USE_ADVANCED
+  0, /* BDTR register value. Not used for TIM4. */
+#endif
+  0  /* DIER register value. */
+};
+
+static THD_WORKING_AREA(Motor_thread_wa, 4096);
+static THD_FUNCTION(Motor_thread, p);
 static THD_WORKING_AREA(Hall_thread_wa, 1024);
 static THD_FUNCTION(Hall_thread, p);
 
@@ -28,8 +48,8 @@ static HallStruct hall_encoder[NUM_OF_MOTOR] = {
 };
 
 static MotorStruct motors[NUM_OF_MOTOR] = {
-  {hall_encoder, PWMA_Channel_1, PWMB_Channel_2,NO_REVERSE, 0.0f, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f},
-  {hall_encoder + 1, PWMA_Channel_3, PWMB_Channel_4,REVERSE, 0.0f, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f}
+  {hall_encoder, PWMA_Channel_1, PWMB_Channel_2,NO_REVERSE, 0.0f, 0.0f, 0.0f, 0, 0, 0.0f},
+  {hall_encoder + 1, PWMA_Channel_3, PWMB_Channel_4,REVERSE, 0.0f, 0.0f, 0.0f, 0, 0, 0.0f}
 };
 
 MotorStruct* getMotors(void)
@@ -37,14 +57,57 @@ MotorStruct* getMotors(void)
   return motors;
 }
 
+void motor_sound(void)
+{
+  uint16_t freq[5] = {1200,1300,1600,1300,1600};
+  chThdSleepMilliseconds(1000);
+
+  pwmStart(&MOTOR_USE_TIMER, &music_pwmcfg);
+
+  MOTOR_USE_TIMER.tim->CR1 |=  STM32_TIM_CR1_ARPE;
+  MOTOR_USE_TIMER.tim->CR1 |=  STM32_TIM_CR1_CMS(3);
+
+  MOTOR_USE_TIMER.tim->PSC = 167;
+
+  uint8_t i = 0;
+  uint16_t ARR;
+  for(; i<5; i++)
+  {
+    ARR = 2000000U/freq[i];
+    MOTOR_USE_TIMER.tim->ARR = ARR;
+    MOTOR_USE_TIMER.tim->CCR[motors[0].PWMChannelA] =
+    MOTOR_USE_TIMER.tim->CCR[motors[0].PWMChannelB] = ARR/2 - 5U;
+    if(i>2)
+    {
+      MOTOR_USE_TIMER.tim->CCR[motors[1].PWMChannelA] = ARR;
+      MOTOR_USE_TIMER.tim->CCR[motors[1].PWMChannelB] = 0;
+    }
+    else
+    {
+      MOTOR_USE_TIMER.tim->CCR[motors[1].PWMChannelA] =
+      MOTOR_USE_TIMER.tim->CCR[motors[1].PWMChannelB] = ARR/2 - 5U;
+    }
+    chThdSleepMilliseconds(250);
+  }
+
+  pwmStop(&MOTOR_USE_TIMER);
+}
+
 inline void motor_init(void)
 {
+
   chThdCreateStatic(Hall_thread_wa, sizeof(Hall_thread_wa),
   NORMALPRIO + 5,
                     Hall_thread, NULL);
 
+
+  motor_sound();
   pwmStart(&MOTOR_USE_TIMER, &motor_pwmcfg);
-  motor_pwmUpdate();
+
+
+  chThdCreateStatic(Motor_thread_wa, sizeof(Motor_thread_wa),
+  NORMALPRIO + 1,
+                    Motor_thread, NULL);
 }
 
 void motor_pwmUpdate(void)
@@ -69,6 +132,18 @@ void motor_pwmUpdate(void)
   MOTOR_USE_TIMER.tim->CCR[motors[1].PWMChannelB] = motors[1].pwmB;
 }
 
+static THD_FUNCTION(Motor_thread, p)
+{
+  (void)p;
+  chRegSetThreadName("Motor Control");
+
+  while(true)
+  {
+    motor_pwmUpdate();
+    chThdSleepMilliseconds(20);
+  }
+}
+
 static THD_FUNCTION(Hall_thread, p)
 {
   (void)p;
@@ -89,7 +164,7 @@ static THD_FUNCTION(Hall_thread, p)
     else
       tick=chVTGetSystemTimeX();
 
-    uint16_t prev[NUM_OF_MOTOR];
+    int32_t prev[NUM_OF_MOTOR];
 
     prev[0] = motors[0].Hall_Encoder->count;
     prev[1] = motors[1].Hall_Encoder->count;
@@ -118,8 +193,6 @@ static THD_FUNCTION(Hall_thread, p)
 
     motors[0].speed = temp[0];
     motors[1].speed = temp[1];
-  //  motors[0].speed_filtered = 0.3f*motors[0].speed + 0.7f*motors[0].speed_filtered;
-  //  motors[1].speed_filtered = 0.3f*motors[1].speed + 0.7f*motors[1].speed_filtered;
 
     count++;
   }

@@ -6,6 +6,7 @@
 
 typedef uint16_t rc_channel_t;
 
+rc_channel_t* rc_getChannels(void);
 rc_channel_t* rc_init(void);
 
 #endif

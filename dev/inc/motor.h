@@ -33,9 +33,8 @@ typedef struct {
 	float input_temp;
 	uint16_t pwmA;
 	uint16_t pwmB;
-	uint16_t speedRaw[SPEED_COUNT];
 	float speed;
-	float speed_filtered
+	int16_t speedRaw[SPEED_COUNT];
 } MotorStruct;
 
 MotorStruct* getMotors(void);

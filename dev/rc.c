@@ -4,7 +4,7 @@
 #define  RC_CHANNEL_NUM 3U
 
 //Use of channel2-4 is supported, due to limited number of timers
-static rc_channel_t rc_channel[RC_CHANNEL_NUM];
+static rc_channel_t rc_channel[RC_CHANNEL_NUM] = {1500U,1500U,1500U};
 
 /*
  * GPT3 configuration.
@@ -18,9 +18,14 @@ static const GPTConfig RC_cfg = {
 
 static void rc_update(void)
 {
-  rc_channel[0] = RC_GPT.tim->CCR[0];
-  rc_channel[1] = RC_GPT.tim->CCR[2];
-  rc_channel[2] = RC_GPT.tim->CCR[3];
+  if(RC_GPT.tim->CCR[0] > 900U && RC_GPT.tim->CCR[0] < 2100U)
+  {
+    rc_channel[0] = RC_GPT.tim->CCR[0];
+    rc_channel[1] = RC_GPT.tim->CCR[2];
+    rc_channel[2] = RC_GPT.tim->CCR[3];
+  }
+  else
+    rc_channel[0] = rc_channel[1] = rc_channel[2] = 1500U;
 }
 
 static THD_WORKING_AREA(RC_thread_wa, 64);
@@ -34,6 +39,11 @@ static THD_FUNCTION(RC_thread, p)
     rc_update();
     chThdSleepMilliseconds(200);
   }
+}
+
+rc_channel_t* rc_getChannels(void)
+{
+  return rc_channel;
 }
 
 rc_channel_t* rc_init(void)
