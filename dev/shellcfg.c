@@ -286,19 +286,18 @@ static THD_FUNCTION(Controller_thread, p)
       encoder_norm = (float)(motors[0].Hall_Encoder->count
         + motors[1].Hall_Encoder->count);
       position_output = 0.0f;
-      speed_cmd = rc_cmd/10.0f;
+      speed_cmd = rc_cmd/8.0f;
     }
 
-    speed_error = (speed_cmd - motors[0].speed + position_output);
-    speed_error_int += speed_error * controller.Ki_v;
+    speed_error = speed_cmd - motors[0].speed;
+    speed_error_int += (speed_error * controller.Ki_v);
 
     if(speed_error_int > controller.int_max_v)
       speed_error_int = controller.int_max_v;
     else if(speed_error_int < -controller.int_max_v)
       speed_error_int = -controller.int_max_v;
 
-    speed_output = (controller.Kp_v * speed_error
-          + speed_error_int);
+    speed_output = atan((controller.Kp_v * speed_error)/1000.0f) * 180.0f/M_PI;
 
     error =  g_IMU1.theta - BALANCE_POS;
 
@@ -316,9 +315,9 @@ static THD_FUNCTION(Controller_thread, p)
             controller.Kd_s * g_IMU1.gyroFiltered[2] / 150.0f;
 
     if(stand_up < 2)
-      temp = ( g_IMU1.theta - BALANCE_POS > 0 ? -0.05f : 0.05f);
+      temp = ( g_IMU1.theta - BALANCE_POS > 0 ? -0.17f : 0.062f);
     else if(stand_up < 30)
-      temp += output/4.35f;
+      temp += output/4.25f;
     else
       temp += output;
 
@@ -354,8 +353,9 @@ static THD_FUNCTION(Controller_thread, p)
     diff_output = (controller.Kp_r * diff_error
             + controller.Ki_r * diff_error_int)/100.0f;
 
-//    tft_printf(5,3,"error:%5d", (int16_t)(diff_error));
-    tft_printf(5,3,"speed+:%5d", (int16_t)(motors[0].speed));
+    tft_printf(5,2,"max:%5d", (int16_t)(speed_error_int));
+    tft_printf(5,4,"speed+:%5d", (int16_t)(speed_output * 100.0f));
+    tft_printf(5,3,"error:%5d", (int16_t)(speed_error));
 
     motors[0].input_diff = motors[0].input - diff_output;
     motors[1].input_diff = motors[1].input + diff_output;
@@ -363,11 +363,10 @@ static THD_FUNCTION(Controller_thread, p)
     if(controller.display_status)
     {
       //controller.display[0] = (int32_t)(position_error);
-      controller.display[0] = 0;
-      controller.display[1] = (int32_t)(speed_error*100.0f);
-      controller.display[2] = (int32_t)(speed_output*100.0f);
-      controller.display[3] = (int32_t)(error);
-      controller.display[4] = (int32_t)(g_IMU1.theta * 100.0f);
+      controller.display[0] = (int32_t)(speed_error*100.0f);
+      controller.display[1] = (int32_t)(speed_output*100.0f);
+      controller.display[2] = (int32_t)(error);
+      controller.display[3] = (int32_t)(g_IMU1.theta * 100.0f);
     }
 
     chThdSleepMilliseconds(20);
@@ -393,9 +392,9 @@ static THD_FUNCTION(Printing_thread, p)
         if(i == 1)
           chprintf(CHP2,"a.");
         else
-          chprintf(CHP2,"%d.",controller.display[i - 1]);
+          chprintf(CHP2,"%d.",controller.display[i - 2]);
 
-        chThdSleepMilliseconds(50);
+        chThdSleepMilliseconds(200);
       }
     else
       chThdSleepMilliseconds(500);

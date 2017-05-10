@@ -10,7 +10,7 @@
 #define  PARAM_NUM 11U
 #define  DEAD_ZONE 0.11f
 //#define  CONTROL_DEAD_ZONE 0.002f
-#define  DISPLAY_NUM 5U
+#define  DISPLAY_NUM 4U
 
 
 typedef struct {
