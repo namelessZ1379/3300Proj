@@ -59,7 +59,7 @@ MotorStruct* getMotors(void)
 
 void motor_sound(void)
 {
-  uint16_t freq[5] = {1200,1350,1800,1350,1800};
+  uint16_t freq[5] = {1200,1300,1600,1300,1600};
   chThdSleepMilliseconds(1000);
 
   pwmStart(&MOTOR_USE_TIMER, &music_pwmcfg);
